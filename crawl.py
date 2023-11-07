@@ -1,72 +1,50 @@
-import os
-import patoolib
-import zipfile
-import concurrent.futures
-from PyInquirer import prompt
 
-folder_path = "/Users/developments/Downloads/NSTH-CTDL&GT"
-password = "http://nhasachtinhoc.blogspot.com"
-output_dir = "/Users/developments/Downloads/NSTH-CTDL&GT"
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
+from PIL import Image
+from io import BytesIO
 
 
-files_to_delete = [
-    "Nhà Sách Tin Học - chia sẻ tài liệu, khóa học.url",
-    "Mời tham gia vào group để nhận được nhiều tài liệu hơn.url",
-    "Lưu ý quan trọng.txt",
-    "Like trang để nhận giáo trình và khóa học mới nhất.url"
-]
+def scrape_and_export_to_excel(output_path, num_posts):
+    url = "http://nhasachtinhoc.blogspot.com/"
+    response = requests.get(url)
 
-questions = [
-    {
-        'type': 'input',
-        'name': 'num_threads',
-        'message': 'Nhập số luồng đi anh:',
-        'validate': lambda val: val.isdigit() and int(val) > 0
-    }
-]
+    if response.status_code == 200:
+        soup = BeautifulSoup(response.content, "html.parser")
+        posts = soup.find_all("div", class_="post")
 
-answers = prompt(questions)
-num_threads = int(answers['num_threads'])
+        data = []
 
-def extract_rar(rar_file_path):
-    output_path = os.path.join(output_dir, os.path.splitext(os.path.basename(rar_file_path))[0])
+        for post in posts[:num_posts]:
+            title = post.find("h3").text.strip()
+            content = post.find("div", class_="post-body").text.strip()
+            image_url = post.find("img")["src"]
 
-    patoolib.extract_archive(rar_file_path, outdir=output_path, password=password)
-    
+            try:
+                image_response = requests.get(image_url)
+                if image_response.status_code == 200:
+                    image_data = image_response.content
+                    image = Image.open(BytesIO(image_data))
+                else:
+                    image = None
+                    print(f"Lỗi: Không thể tải hình ảnh từ {image_url}")
+            except Exception as e:
+                image = None
+                print(f"Lỗi: {str(e)}")
 
-    os.remove(rar_file_path)
-    
-    print(f"Tệp RAR '{os.path.basename(rar_file_path)}' đã được giải nén và xoá.")
-    
-    process_extracted_dir(output_path)
+            data.append([title, content, image])
 
-def extract_zip(zip_file_path):
-    output_path = os.path.join(output_dir, os.path.splitext(os.path.basename(zip_file_path))[0])
-    
+        df = pd.DataFrame(data, columns=["Tiêu đề", "Nội dung", "Hình ảnh"])
+        df.to_excel(output_path, index=False)
+        print(f"Dữ liệu từ {num_posts} bài viết đã được xuất thành công vào tệp Excel: {output_path}")
+    else:
+        print("Không thể kết nối đến trang web.")
 
-    with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
-        zip_ref.extractall(output_path)
-    
 
-    os.remove(zip_file_path)
-    
-    print(f"Tệp ZIP '{os.path.basename(zip_file_path)}' đã được giải nén và xoá.")
-    
-    process_extracted_dir(output_path)
+num_posts = int(input("Nhập số lượng bài viết muốn lấy: "))
 
-def process_extracted_dir(dir_path):
-    for root, dirs, files in os.walk(dir_path):
-        for filename in files_to_delete:
-            file_path = os.path.join(root, filename)
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                print(f"Tệp '{filename}' đã được xoá từ {root}")
 
-with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
-    for filename in os.listdir(folder_path):
-        file_path = os.path.join(folder_path, filename)
-        
-        if filename.endswith(".rar"):
-            executor.submit(extract_rar, file_path)
-        elif filename.endswith(".zip"):
-            executor.submit(extract_zip, file_path)
+output_path = input("Nhập đường dẫn và tên tệp Excel để lưu (phải có đuôi .xlsx ): ")
+
+scrape_and_export_to_excel(output_path, num_posts)
